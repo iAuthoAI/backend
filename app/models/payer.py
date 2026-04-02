@@ -4,11 +4,12 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 from app.db.session import Base
+from app.core.config import settings
 
 
 class Payer(Base):
     __tablename__ = "payers"
-    __table_args__ = {"schema": "OneClick"}
+    __table_args__ = {} if settings.DATABASE_URL.startswith("sqlite") else {"schema": "OneClick"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("OneClick.organizations.id"))
@@ -33,7 +34,7 @@ class Payer(Base):
 
 class Plan(Base):
     __tablename__ = "plans"
-    __table_args__ = {"schema": "OneClick"}
+    __table_args__ = {} if settings.DATABASE_URL.startswith("sqlite") else {"schema": "OneClick"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     payer_id = Column(UUID(as_uuid=True), ForeignKey("OneClick.payers.id"), nullable=False)
@@ -52,7 +53,7 @@ class Plan(Base):
 
 class PayerPolicy(Base):
     __tablename__ = "payer_policies"
-    __table_args__ = {"schema": "OneClick"}
+    __table_args__ = {} if settings.DATABASE_URL.startswith("sqlite") else {"schema": "OneClick"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     payer_id = Column(UUID(as_uuid=True), ForeignKey("OneClick.payers.id"), nullable=False)
@@ -82,7 +83,7 @@ class PayerPolicy(Base):
 
 class PayerDenialReason(Base):
     __tablename__ = "payer_denial_reasons"
-    __table_args__ = {"schema": "OneClick"}
+    __table_args__ = {} if settings.DATABASE_URL.startswith("sqlite") else {"schema": "OneClick"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     payer_id = Column(UUID(as_uuid=True), ForeignKey("OneClick.payers.id"), nullable=False)
@@ -100,7 +101,7 @@ class PayerDenialReason(Base):
 
 class PaCoverageRule(Base):
     __tablename__ = "payer_coverage_rules"
-    __table_args__ = {"schema": "OneClick"}
+    __table_args__ = {} if settings.DATABASE_URL.startswith("sqlite") else {"schema": "OneClick"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     payer_id = Column(UUID(as_uuid=True), ForeignKey("OneClick.payers.id"), nullable=False)
