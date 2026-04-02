@@ -4,11 +4,12 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 from app.db.session import Base
+from app.core.config import settings
 
 
 class Organization(Base):
     __tablename__ = "organizations"
-    __table_args__ = {"schema": "OneClick"}
+    __table_args__ = {} if settings.DATABASE_URL.startswith("sqlite") else {"schema": "OneClick"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
@@ -34,12 +35,12 @@ class Organization(Base):
 
 class User(Base):
     __tablename__ = "users"
-    __table_args__ = {"schema": "OneClick"}
+    __table_args__ = {} if settings.DATABASE_URL.startswith("sqlite") else {"schema": "OneClick"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("OneClick.organizations.id"))
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("OneClick.organizations.id" if not settings.DATABASE_URL.startswith("sqlite") else "organizations.id"))
     role = Column(SAEnum("provider", "payer_intake", "payer_clinical", "payer_decision", "admin", "super_admin",
-                         name="user_role", schema="OneClick"), nullable=False)
+                         name="user_role"), nullable=False)
     email = Column(String(255), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     first_name = Column(String(100), nullable=False)

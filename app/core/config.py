@@ -1,3 +1,4 @@
+import os
 import boto3
 from botocore.exceptions import ClientError
 from pydantic_settings import BaseSettings
@@ -24,7 +25,8 @@ _ps = _load_parameter_store()
 
 
 def _get(key: str, default: str = "") -> str:
-    return _ps.get(key, default)
+    env_key = key.replace("/oneclick/", "").replace("/", "_").upper()
+    return os.getenv(env_key, _ps.get(key, default))
 
 
 class Settings(BaseSettings):
@@ -34,11 +36,11 @@ class Settings(BaseSettings):
     DEBUG: bool                         = APP_ENV == "development"
 
     # Database
-    DATABASE_URL: str                   = _get("/oneclick/db/url", "")
-    DB_SCHEMA: str                      = _get("/oneclick/db/schema", "OneClick")
+    DATABASE_URL: str                   = _get("/oneclick/db/url", os.getenv("DATABASE_URL", "sqlite:///./test.db"))
+    DB_SCHEMA: str                      = _get("/oneclick/db/schema", os.getenv("DB_SCHEMA", "OneClick"))
 
     # Security
-    SECRET_KEY: str                     = _get("/oneclick/jwt/secret", "change-me")
+    SECRET_KEY: str                     = _get("/oneclick/jwt/secret", os.getenv("SECRET_KEY", "supersecret"))
     ALGORITHM: str                      = _get("/oneclick/jwt/algorithm", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int    = int(_get("/oneclick/jwt/access_expire_minutes", "60"))
     REFRESH_TOKEN_EXPIRE_DAYS: int      = int(_get("/oneclick/jwt/refresh_expire_days", "7"))

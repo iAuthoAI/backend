@@ -4,11 +4,12 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 from app.db.session import Base
+from app.core.config import settings
 
 
 class Patient(Base):
     __tablename__ = "patients"
-    __table_args__ = {"schema": "OneClick"}
+    __table_args__ = {} if settings.DATABASE_URL.startswith("sqlite") else {"schema": "OneClick"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("OneClick.organizations.id"))
@@ -53,7 +54,7 @@ class Patient(Base):
 
 class PatientCoverage(Base):
     __tablename__ = "patient_coverage"
-    __table_args__ = {"schema": "OneClick"}
+    __table_args__ = {} if settings.DATABASE_URL.startswith("sqlite") else {"schema": "OneClick"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     patient_id = Column(UUID(as_uuid=True), ForeignKey("OneClick.patients.id"), nullable=False)
@@ -82,7 +83,7 @@ class PatientCoverage(Base):
 
 class PatientProblem(Base):
     __tablename__ = "patient_problems"
-    __table_args__ = {"schema": "OneClick"}
+    __table_args__ = {} if settings.DATABASE_URL.startswith("sqlite") else {"schema": "OneClick"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     patient_id = Column(UUID(as_uuid=True), ForeignKey("OneClick.patients.id"), nullable=False)
@@ -101,7 +102,7 @@ class PatientProblem(Base):
 
 class PatientMedication(Base):
     __tablename__ = "patient_medications"
-    __table_args__ = {"schema": "OneClick"}
+    __table_args__ = {} if settings.DATABASE_URL.startswith("sqlite") else {"schema": "OneClick"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     patient_id = Column(UUID(as_uuid=True), ForeignKey("OneClick.patients.id"), nullable=False)
@@ -124,7 +125,7 @@ class PatientMedication(Base):
 
 class PatientLab(Base):
     __tablename__ = "patient_labs"
-    __table_args__ = {"schema": "OneClick"}
+    __table_args__ = {} if settings.DATABASE_URL.startswith("sqlite") else {"schema": "OneClick"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     patient_id = Column(UUID(as_uuid=True), ForeignKey("OneClick.patients.id"), nullable=False)
@@ -148,7 +149,7 @@ class PatientLab(Base):
 
 class PatientVital(Base):
     __tablename__ = "patient_vitals"
-    __table_args__ = {"schema": "OneClick"}
+    __table_args__ = {} if settings.DATABASE_URL.startswith("sqlite") else {"schema": "OneClick"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     patient_id = Column(UUID(as_uuid=True), ForeignKey("OneClick.patients.id"), nullable=False)

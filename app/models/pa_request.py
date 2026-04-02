@@ -4,6 +4,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 from app.db.session import Base
+from app.core.config import settings
 
 
 class PaRequest(Base):
