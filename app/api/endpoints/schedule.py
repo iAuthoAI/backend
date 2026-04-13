@@ -3,12 +3,134 @@ from sqlalchemy.orm import Session, joinedload
 from typing import Optional
 from datetime import date, datetime
 from app.db.session import get_db
-from app.models.pa_request import Appointment, PaRequest
-from app.models.patient import Patient, PatientVital, PatientCoverage
+from app.models.pa_request import Appointment, PaRequest, ClinicalNote
+from app.models.patient import Patient, PatientVital, PatientCoverage, PatientProblem, PatientMedication, PatientLab
 from app.models.user import User
 from app.core.security import get_current_user
 
 router = APIRouter()
+
+
+def _gender_short(g: str) -> str:
+    return {"male": "M", "female": "F"}.get((g or "").lower(), g or "U")
+
+
+def _last_first(p: Patient) -> str:
+    return f"{p.last_name}, {p.first_name}"
+
+
+def _priority_label(order: int) -> str:
+    return {1: "Primary", 2: "Secondary", 3: "Tertiary"}.get(order, "Other")
+
+
+def _build_patient_payload(patient: Patient, db: Session, *, room: str = "", chief_complaint: str = "", status: str = "", provider_name: str = ""):
+    """Build a Patient payload matching the frontend Patient interface."""
+    age = (date.today() - patient.date_of_birth).days // 365 if patient.date_of_birth else 0
+
+    latest_vital = db.query(PatientVital).filter(
+        PatientVital.patient_id == str(patient.id)
+    ).order_by(PatientVital.recorded_at.desc()).first()
+
+    problems = db.query(PatientProblem).filter(
+        PatientProblem.patient_id == str(patient.id),
+        PatientProblem.status == "active",
+    ).all()
+
+    medications = db.query(PatientMedication).filter(
+        PatientMedication.patient_id == str(patient.id),
+        PatientMedication.is_active == True,
+    ).all()
+
+    labs = db.query(PatientLab).filter(
+        PatientLab.patient_id == str(patient.id),
+    ).order_by(PatientLab.resulted_at.desc()).limit(10).all()
+
+    notes = db.query(ClinicalNote).filter(
+        ClinicalNote.patient_id == str(patient.id),
+    ).order_by(ClinicalNote.created_at.desc()).limit(5).all()
+
+    coverages = db.query(PatientCoverage).options(
+        joinedload(PatientCoverage.payer),
+        joinedload(PatientCoverage.plan),
+    ).filter(
+        PatientCoverage.patient_id == str(patient.id),
+        PatientCoverage.is_active == True,
+    ).order_by(PatientCoverage.coverage_order).all()
+
+    allergies_raw = patient.allergies or []
+    if isinstance(allergies_raw, list):
+        allergy_strs = []
+        for a in allergies_raw:
+            if isinstance(a, dict):
+                allergy_strs.append(f"{a.get('allergen', '')} ({a.get('reaction', '')})" if a.get('reaction') else a.get('allergen', ''))
+            else:
+                allergy_strs.append(str(a))
+    else:
+        allergy_strs = [str(allergies_raw)]
+
+    if not allergy_strs:
+        allergy_strs = ["No Known Allergies"]
+
+    return {
+        "id": str(patient.id),
+        "mrn": patient.mrn,
+        "name": _last_first(patient),
+        "dob": patient.date_of_birth.isoformat() if patient.date_of_birth else "",
+        "age": age,
+        "sex": _gender_short(patient.gender),
+        "room": room or "",
+        "chiefComplaint": chief_complaint or "",
+        "status": status or "",
+        "provider": provider_name or "Provider",
+        "allergies": allergy_strs,
+        "insurance": [
+            {
+                "payerId": str(c.payer.id) if c.payer else "",
+                "payerName": c.payer.name if c.payer else "",
+                "payerShortName": c.payer.code if c.payer else "",
+                "planType": c.plan.plan_type if c.plan else "",
+                "memberId": c.member_id or "",
+                "groupNumber": c.group_number or "",
+                "priority": _priority_label(c.coverage_order),
+                "status": "Active" if c.is_active else "Inactive",
+                "effectiveDate": c.effective_date.isoformat() if c.effective_date else "",
+                "copay": f"${int(c.copay)}" if c.copay else "",
+            }
+            for c in coverages
+        ],
+        "vitals": {
+            "bp": f"{latest_vital.bp_systolic}/{latest_vital.bp_diastolic}" if latest_vital and latest_vital.bp_systolic else "N/A",
+            "hr": latest_vital.heart_rate if latest_vital else 0,
+            "temp": float(latest_vital.temperature) if latest_vital and latest_vital.temperature else 98.6,
+            "rr": latest_vital.respiratory_rate if latest_vital else 0,
+            "o2": latest_vital.spo2 if latest_vital else 100,
+        },
+        "medications": [
+            {"name": m.medication_name, "dose": m.dose or "", "route": m.route or "", "freq": m.frequency or ""}
+            for m in medications
+        ],
+        "problems": [p.problem_name for p in problems],
+        "labs": [
+            {
+                "name": lab.test_name,
+                "value": lab.result_value or "",
+                "unit": lab.result_unit or "",
+                "flag": lab.abnormal_flag if lab.is_abnormal else None,
+                "date": lab.resulted_at.strftime("Today %H%M") if lab.resulted_at and lab.resulted_at.date() == date.today() else (lab.resulted_at.strftime("%m/%d %H%M") if lab.resulted_at else ""),
+            }
+            for lab in labs
+        ],
+        "notes": [
+            {
+                "id": str(n.id),
+                "date": n.created_at.strftime("Today %H:%M") if n.created_at and n.created_at.date() == date.today() else (n.created_at.strftime("Yesterday %H:%M") if n.created_at else ""),
+                "author": provider_name or "Provider",
+                "type": n.note_type,
+                "preview": n.content[:80] + "..." if n.content and len(n.content) > 80 else (n.content or ""),
+            }
+            for n in notes
+        ],
+    }
 
 
 @router.get("/today")
@@ -16,93 +138,65 @@ async def get_today_schedule(current_user=Depends(get_current_user), db: Session
     today = date.today()
     provider_id = current_user["user_id"]
 
+    provider = db.query(User).filter(User.id == provider_id).first()
+    provider_name = f"Dr. {provider.last_name}" if provider else "Provider"
+
     appointments = db.query(Appointment).options(
-        joinedload(Appointment.patient).joinedload(Patient.vitals),
-        joinedload(Appointment.patient).joinedload(Patient.coverage).joinedload(PatientCoverage.payer),
+        joinedload(Appointment.patient),
     ).filter(
         Appointment.provider_id == provider_id,
         Appointment.scheduled_time >= datetime.combine(today, datetime.min.time()),
         Appointment.scheduled_time < datetime.combine(today, datetime.max.time()),
     ).order_by(Appointment.scheduled_time).all()
 
-    result = []
+    patients = []
     for appt in appointments:
-        patient = appt.patient
+        p = _build_patient_payload(
+            appt.patient, db,
+            room=appt.room or "",
+            chief_complaint=appt.chief_complaint or "",
+            status=appt.appointment_type or "",
+            provider_name=provider_name,
+        )
+        p["scheduled_time"] = appt.scheduled_time.strftime("%H:%M")
 
-        latest_vital = db.query(PatientVital).filter(
-            PatientVital.patient_id == str(patient.id)
-        ).order_by(PatientVital.recorded_at.desc()).first()
-
+        # Auth status
         active_pa = db.query(PaRequest).filter(
-            PaRequest.patient_id == str(patient.id),
+            PaRequest.patient_id == str(appt.patient.id),
             PaRequest.status.in_(["intake_review", "clinical_review", "decision_pending", "action_required"])
         ).first()
-
         expiring_pa = db.query(PaRequest).filter(
-            PaRequest.patient_id == str(patient.id),
+            PaRequest.patient_id == str(appt.patient.id),
             PaRequest.status == "approved",
             PaRequest.expires_at.isnot(None),
+        ).first()
+        approved_pa = db.query(PaRequest).filter(
+            PaRequest.patient_id == str(appt.patient.id),
+            PaRequest.status == "approved"
+        ).first()
+        denied_pa = db.query(PaRequest).filter(
+            PaRequest.patient_id == str(appt.patient.id),
+            PaRequest.status == "denied"
         ).first()
 
         auth_status = None
         if expiring_pa:
             auth_status = "Expiring"
-        elif active_pa:
-            status_map = {
-                "intake_review": "Intake Review",
-                "clinical_review": "Clinical Review",
-                "decision_pending": "Decision Pending",
-                "action_required": "Action Required",
-                "appeal_submitted": "Appeal",
-            }
-            auth_status = status_map.get(active_pa.status)
-
-        approved_pa = db.query(PaRequest).filter(
-            PaRequest.patient_id == str(patient.id),
-            PaRequest.status == "approved"
-        ).first()
-        if approved_pa and not expiring_pa:
+        elif denied_pa and not active_pa:
+            auth_status = "Appeal"
+        elif approved_pa:
             auth_status = "Verified"
+        elif active_pa:
+            auth_status = "In Review"
 
-        denied_pa = db.query(PaRequest).filter(
-            PaRequest.patient_id == str(patient.id),
-            PaRequest.status == "denied"
-        ).first()
-        if denied_pa and not active_pa:
-            auth_status = "Denied"
-
-        result.append({
-            "appointment_id": str(appt.id),
-            "scheduled_time": appt.scheduled_time.strftime("%H:%M"),
-            "appointment_type": appt.appointment_type,
-            "room": appt.room,
-            "chief_complaint": appt.chief_complaint,
-            "status": appt.status,
-            "patient": {
-                "id": str(patient.id),
-                "mrn": patient.mrn,
-                "full_name": f"{patient.first_name} {patient.last_name}",
-                "first_name": patient.first_name,
-                "last_name": patient.last_name,
-                "age": (date.today() - patient.date_of_birth).days // 365,
-                "gender": patient.gender,
-                "allergies": patient.allergies,
-                "code_status": patient.code_status,
-            },
-            "vitals": {
-                "bp": f"{latest_vital.bp_systolic}/{latest_vital.bp_diastolic}" if latest_vital else None,
-                "hr": latest_vital.heart_rate if latest_vital else None,
-                "bp_elevated": (latest_vital.bp_systolic and latest_vital.bp_systolic > 140) if latest_vital else False,
-                "hr_elevated": (latest_vital.heart_rate and latest_vital.heart_rate > 100) if latest_vital else False,
-            } if latest_vital else None,
-            "auth_status": auth_status,
-        })
+        p["auth_status"] = auth_status
+        patients.append(p)
 
     return {
         "date": today.isoformat(),
-        "provider": current_user.get("email"),
-        "patient_count": len(result),
-        "appointments": result,
+        "provider": provider_name,
+        "patient_count": len(patients),
+        "patients": patients,
     }
 
 

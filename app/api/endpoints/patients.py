@@ -6,6 +6,7 @@ from app.db.session import get_db
 from app.models.patient import Patient, PatientCoverage, PatientProblem, PatientMedication, PatientLab, PatientVital
 from app.models.pa_request import Appointment, ClinicalNote, PaRequest
 from app.core.security import get_current_user
+from app.api.endpoints.schedule import _build_patient_payload
 
 router = APIRouter()
 
@@ -28,24 +29,30 @@ async def list_patients(
         )
     total = query.count()
     patients = query.order_by(Patient.last_name, Patient.first_name).offset(offset).limit(limit).all()
+
+    # Get appointment info for each patient to populate room/chiefComplaint/status
+    today = date.today()
+    from datetime import datetime
+    result = []
+    for p in patients:
+        appt = db.query(Appointment).filter(
+            Appointment.patient_id == str(p.id),
+            Appointment.scheduled_time >= datetime.combine(today, datetime.min.time()),
+            Appointment.scheduled_time < datetime.combine(today, datetime.max.time()),
+        ).order_by(Appointment.scheduled_time).first()
+
+        payload = _build_patient_payload(
+            p, db,
+            room=appt.room if appt else "",
+            chief_complaint=appt.chief_complaint if appt else "",
+            status=appt.appointment_type if appt else "",
+            provider_name=f"Dr. {p.last_name}",
+        )
+        result.append(payload)
+
     return {
         "total": total,
-        "patients": [
-            {
-                "id": str(p.id),
-                "mrn": p.mrn,
-                "full_name": f"{p.first_name} {p.last_name}",
-                "first_name": p.first_name,
-                "last_name": p.last_name,
-                "date_of_birth": p.date_of_birth.isoformat() if p.date_of_birth else None,
-                "gender": p.gender,
-                "phone": p.phone,
-                "email": p.email,
-                "code_status": p.code_status,
-                "allergies": p.allergies,
-            }
-            for p in patients
-        ]
+        "patients": result,
     }
 
 
