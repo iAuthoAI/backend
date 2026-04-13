@@ -68,8 +68,11 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.ALLOWED_ORIGINS.split(",")]
 
     class Config:
-        # .env no longer used — all config from AWS Parameter Store
-        env_file = None
+        # Load from .env if it exists
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        # Environment variables take precedence over Param Store if both are set
+        extra = "ignore"
 
 
 settings = Settings()

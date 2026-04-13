@@ -44,7 +44,7 @@ async def get_intake_queue(
         }
         for r in requests
     ]
-    return {"total": len(items), "queue": items}
+    return {"items": items, "total": len(items)}
 
 
 def _days_pending(dt) -> int:
@@ -126,7 +126,9 @@ async def submit_intake_review(
     if not pa:
         raise HTTPException(status_code=404, detail="PA request not found")
 
-    action = body.get("action", "forward_clinical")
+    action = body.get("action") or body.get("decision") or "forward_clinical"
+    if action == "approve":
+        action = "forward_clinical"
     notes = body.get("notes", "")
 
     status_map = {
@@ -191,7 +193,7 @@ async def get_clinical_queue(current_user=Depends(get_current_user), db: Session
         }
         for r in requests
     ]
-    return {"total": len(items), "queue": items}
+    return {"items": items, "total": len(items)}
 
 
 @router.get("/clinical/review/{pa_id}")
@@ -272,13 +274,14 @@ async def submit_clinical_review(
     if not pa:
         raise HTTPException(status_code=404, detail="PA request not found")
 
-    recommendation = body.get("recommendation", "approve")
+    recommendation = body.get("recommendation") or body.get("decision") or "approve"
     clinical_notes_text = body.get("clinical_notes", "")
 
     status_map = {
         "approve": "decision_pending",
         "deny": "denied",
         "peer_review": "decision_pending",
+        "request_info": "action_required",
     }
     old_status = pa.status
     new_status = status_map.get(recommendation, "decision_pending")
@@ -296,6 +299,18 @@ async def submit_clinical_review(
         notes=f"Clinical recommendation: {recommendation}. {clinical_notes_text}",
     )
     db.add(history)
+
+    if recommendation == "request_info" and pa.requesting_provider_id:
+        notif = Notification(
+            user_id=pa.requesting_provider_id,
+            pa_request_id=pa.id,
+            type="rfi_received",
+            title=f"Additional Information Required — {pa.request_number}",
+            message=clinical_notes_text or "The payer has requested additional information to process your prior authorization request. Please review and resubmit.",
+            action_url=f"/provider/pa-requests/{pa.id}",
+        )
+        db.add(notif)
+
     db.commit()
     return {"success": True, "new_status": new_status, "recommendation": recommendation}
 
@@ -370,10 +385,10 @@ async def submit_decision(
         raise HTTPException(status_code=404, detail="PA request not found")
 
     decision = body.get("decision")
-    if decision not in ("approved", "denied", "partial"):
+    if decision not in ("approved", "denied", "partial", "request_info"):
         raise HTTPException(status_code=400, detail="Invalid decision")
 
-    status_map = {"approved": "approved", "denied": "denied", "partial": "approved"}
+    status_map = {"approved": "approved", "denied": "denied", "partial": "approved", "request_info": "action_required"}
     old_status = pa.status
     pa.status = status_map[decision]
     pa.decision = decision
@@ -392,6 +407,18 @@ async def submit_decision(
         notes=f"Final decision: {decision}. {pa.decision_reason or ''}",
     )
     db.add(history)
+
+    if decision == "request_info" and pa.requesting_provider_id:
+        notif = Notification(
+            user_id=pa.requesting_provider_id,
+            pa_request_id=pa.id,
+            type="rfi_received",
+            title=f"Additional Information Required — {pa.request_number}",
+            message=pa.decision_reason or "The payer has requested additional information to process your prior authorization request. Please review and resubmit.",
+            action_url=f"/provider/pa-requests/{pa.id}",
+        )
+        db.add(notif)
+
     db.commit()
     return {"success": True, "decision": decision, "new_status": pa.status}
 
@@ -430,7 +457,7 @@ async def get_decision_queue(current_user=Depends(get_current_user), db: Session
         }
         for r in requests
     ]
-    return {"stats": stats, "queue": items}
+    return {"items": items, "stats": stats, "total": len(items)}
 
 
 @router.get("/stats/performance")
